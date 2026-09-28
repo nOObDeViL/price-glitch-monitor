@@ -28,6 +28,9 @@ jobs:
       CITY: ${{ secrets.CITY }}
       LATITUDE: ${{ secrets.LATITUDE }}
       LONGITUDE: ${{ secrets.LONGITUDE }}
+      # Blinkit & Zepto block GitHub's datacenter IPs -> scan those from home (./service.sh install blinkit,zepto).
+      # Override without editing this file: Settings -> Secrets and variables -> Actions -> Variables -> PLATFORMS
+      PLATFORMS: ${{ vars.PLATFORMS || 'amazon,flipkart,flipkart_minutes,instamart,jiomart' }}
       HEADLESS: "true"
       PYTHONWARNINGS: ignore
     steps:

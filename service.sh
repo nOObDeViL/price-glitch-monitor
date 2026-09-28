@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run the monitor as a macOS background service (launchd).
-#   ./service.sh install    start now + auto-start at login + auto-restart on crash
+#   ./service.sh install [platforms]   start now + auto-start at login + auto-restart on crash
+#                                      e.g. ./service.sh install blinkit,zepto  (the ones GitHub can't reach)
 #   ./service.sh uninstall  stop and remove
 #   ./service.sh status     is it running?
 #   ./service.sh logs       follow the log
@@ -14,6 +15,9 @@ case "${1:-}" in
   install)
     [ -f config.json ] || { echo "Run the setup first: .venv/bin/python run.py --setup"; exit 1; }
     mkdir -p "$HOME/Library/LaunchAgents" logs
+    EXTRA=""
+    if [ -n "${2:-}" ]; then EXTRA="
+    <string>--platforms</string><string>$2</string>"; fi
     cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -25,7 +29,7 @@ case "${1:-}" in
     <!-- caffeinate -i keeps the Mac from idle-sleeping while the monitor runs -->
     <string>/usr/bin/caffeinate</string><string>-i</string>
     <string>$DIR/.venv/bin/python</string><string>-W</string><string>ignore</string>
-    <string>$DIR/run.py</string>
+    <string>$DIR/run.py</string>$EXTRA
   </array>
   <key>WorkingDirectory</key><string>$DIR</string>
   <key>RunAtLoad</key><true/>
@@ -38,7 +42,7 @@ case "${1:-}" in
 EOF
     launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$PLIST"
-    echo "✅ Installed. Running in the background and will start automatically at login."
+    echo "✅ Installed (${2:-all platforms}). Running in the background; starts automatically at login."
     echo "   Logs: ./service.sh logs     Stop: ./service.sh uninstall"
     ;;
   uninstall)

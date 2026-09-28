@@ -120,6 +120,7 @@ ENV_MAP = {
     "INTERVAL_MINUTES": ("monitor", "interval_minutes", int),
     "MIN_DISCOUNT_PCT": ("monitor", "min_discount_pct", float),
     "MIN_MRP": ("monitor", "min_mrp", float),
+    "PLATFORMS": ("monitor", "platforms", lambda v: [x.strip().lower() for x in v.split(",") if x.strip()]),
 }
 
 
