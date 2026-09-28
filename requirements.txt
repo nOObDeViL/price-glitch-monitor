@@ -1,0 +1,6 @@
+playwright>=1.44
+playwright-stealth>=2.0.0
+apscheduler>=3.10,<4
+python-dotenv>=1.0
+requests>=2.31
+telethon>=1.36

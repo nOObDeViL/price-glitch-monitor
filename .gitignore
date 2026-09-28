@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+config.json
+config.json.tmp
+.env
+deals.db
+deals.db-*
+sessions/
+debug/
+logs/
