@@ -193,9 +193,56 @@ class TestGlitchMode(unittest.TestCase):
         self.assertFalse(evaluate(prod(price=5, mrp=20), c).alert)      # cheap item, MRP < ₹99
         self.assertFalse(evaluate(prod(price=1, mrp=500, in_stock=False), c).alert)
 
-    def test_defaults_are_glitch_mode(self):
-        self.assertEqual(DEFAULTS["monitor"]["alert_mode"], "glitch")
+    def test_defaults(self):
+        self.assertEqual(DEFAULTS["monitor"]["alert_mode"], "errors")
         self.assertEqual(DEFAULTS["monitor"]["glitch_price_max"], 10.0)
+
+
+class TestErrorMode(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Database(Path(self.tmp.name) / "t.db")
+        self.c = cfg(alert_mode="errors", glitch_price_max=10)
+
+    def tearDown(self):
+        self.db.close()
+        self.tmp.cleanup()
+
+    def history(self, pid, prices, platform="amazon", mrp=2999):
+        now = time.time()
+        for i, price in enumerate(prices):  # spread over the last ~2 days
+            ts = now - (len(prices) - i) * 12 * 3600
+            self.db._conn.execute("INSERT INTO observations VALUES (?,?,?,?,?)", (platform, pid, price, mrp, ts))
+        self.db._conn.commit()
+
+    def test_bump_and_cut_trick_ignored(self):
+        self.history("B", [500, 2000, 2000, 2000])          # bumped from ₹500 to ₹2,000
+        self.assertFalse(evaluate(prod("amazon", "B", price=500, mrp=2999), self.c, self.db).alert)
+
+    def test_real_error_far_below_lowest_ever(self):
+        self.history("R", [1899, 1950, 1800, 1899])
+        d = evaluate(prod("amazon", "R", price=299, mrp=2499), self.c, self.db)
+        self.assertTrue(d.alert)
+        self.assertIn("1,800", d.note)
+
+    def test_modest_drop_is_not_an_error(self):
+        self.history("M", [1899, 1950, 1800])
+        self.assertFalse(evaluate(prod("amazon", "M", price=999, mrp=2499), self.c, self.db).alert)  # only 45% under
+
+    def test_standing_low_price_is_not_an_error(self):
+        self.history("S", [229, 229, 229], platform="jiomart", mrp=1999)  # "89% off" forever
+        self.assertFalse(evaluate(prod("jiomart", "S", price=229, mrp=1999), self.c, self.db).alert)
+
+    def test_first_sighting(self):
+        self.assertFalse(evaluate(prod("amazon", "N1", price=199, mrp=2999), self.c, self.db).alert)    # 93%, seller MRP
+        self.assertFalse(evaluate(prod("blinkit", "N2", price=399, mrp=2999), self.c, self.db).alert)   # 87%
+        self.assertTrue(evaluate(prod("blinkit", "N3", price=20, mrp=600), self.c, self.db).alert)      # 97% printed MRP
+        self.assertTrue(evaluate(prod("amazon", "N4", price=9, mrp=999), self.c, self.db).alert)        # ≤ ₹10 glitch
+
+    def test_needs_enough_history(self):
+        self.db._conn.execute("INSERT INTO observations VALUES ('amazon','Y',1800,2499,?)", (time.time() - 3600,))
+        self.db._conn.commit()
+        self.assertFalse(evaluate(prod("amazon", "Y", price=299, mrp=2499), self.c, self.db).alert)  # 1 check, 1 h
 
 
 class TestDedupe(unittest.TestCase):

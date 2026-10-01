@@ -152,19 +152,29 @@ When a **Cloudflare / DataDome / AWS WAF / Amazon robot check** appears, the pla
 back-off** (15 → 30 → 60 … 240 min), and you get a Telegram note telling you to run `--login <platform>` and clear it
 by hand. The tool never tries to solve CAPTCHAs.
 
-### Default: glitch-only mode
+### Default: real pricing errors only
 
-Out of the box (`"alert_mode": "glitch"`) you're alerted **only** when an item costs **₹10 or less** with an MRP of
-**₹99 or more**: real pricing errors such as ₹0, ₹1 or ₹9 on a ₹500 product. Ordinary "80 % off" deals are ignored,
-so sellers who inflate the MRP and then "discount" it can't trigger an alert.
+The MRP can be faked, so by default (`"alert_mode": "errors"`) the monitor judges each product against **its own
+price history**. You're alerted when:
 
-Before every alert the monitor **re-checks** the item: it opens the product page and confirms the main price shown
-there. If the product page shows no readable price (Instamart, Zepto), it reloads the listing instead. Only confirmed
-glitches are sent, and the alert says `✅ Price re-checked`. If one platform suddenly shows many "₹0" items at
-once, only the top 5 are checked, since that's usually a parsing issue or a promo shelf.
+| Rule | Example |
+|---|---|
+| Price is **≥ 60 % below the lowest price ever seen** for that product (needs ≥ 3 checks over ≥ 24 h) | Earbuds that have never been under ₹1,800 suddenly cost ₹299 |
+| Price is **₹10 or less** on an item with MRP ≥ ₹99 | ₹0 / ₹1 / ₹9 on a ₹500 product |
+| A product seen for the first time is **≥ 95 % below a printed MRP** (grocery/quick-commerce only) | ₹20 for a ₹600 MRP pack |
 
-Settings: `glitch_price_max` (default 10), `min_mrp` (default 99). `"alert_mode": "deals"` brings back the broader
-80 %-off rules described below.
+Comparing against the **lowest** price ever seen, not the highest, is what defeats "raise the price, then cut it":
+₹500 → ₹2,000 → back to ₹500 never goes below its own ₹500 floor, so it never alerts. A product that has always
+sat at "89 % off" doesn't alert either.
+
+The monitor needs about a day of scans to learn normal prices. Until then, the log shows deals held back as
+`learning-normal-price`.
+
+Before every alert it **re-checks** the item: it opens the product page and confirms the main price, or reloads the
+listing for Instamart and Zepto. Only confirmed errors are sent (`✅ Price re-checked`).
+
+Settings: `error_drop_pct` (60), `history_min_hours` (24), `glitch_price_max` (10), `min_mrp` (99).
+Other modes: `"glitch"` (only ≤ ₹10) and `"deals"` (any 80 %+ off MRP, which is noisy).
 
 ### Alert rules and false-positive filtering
 

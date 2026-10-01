@@ -57,9 +57,15 @@ DEFAULTS: Dict[str, Any] = {
     },
     "monitor": {
         "interval_minutes": 5,
-        # "glitch": alert ONLY when price <= glitch_price_max (₹0-10 pricing errors).
-        # "deals":  also alert on >= min_discount_pct drops (noisy: inflated MRPs).
-        "alert_mode": "glitch",
+        # "errors": genuine pricing errors at any price, judged against the product's
+        #           own lowest-ever price (bump-and-cut proof) + ≤ ₹10 glitches.
+        # "glitch": ONLY price <= glitch_price_max.
+        # "deals":  any >= min_discount_pct off MRP (noisy: inflated MRPs).
+        "alert_mode": "errors",
+        "error_drop_pct": 60.0,        # price must be this % below the lowest price ever seen
+        "error_min_reference": 50.0,   # ...and that lowest price must be at least ₹50
+        "history_min_points": 3,       # sightings needed before history is trusted
+        "history_min_hours": 24.0,
         "min_discount_pct": 80.0,
         "glitch_price_max": 10.0,
         # Re-open each glitch's product page and confirm the price + stock before alerting.
@@ -129,6 +135,7 @@ ENV_MAP = {
     "MIN_DISCOUNT_PCT": ("monitor", "min_discount_pct", float),
     "MIN_MRP": ("monitor", "min_mrp", float),
     "ALERT_MODE": ("monitor", "alert_mode", str),
+    "ERROR_DROP_PCT": ("monitor", "error_drop_pct", float),
     "GLITCH_PRICE_MAX": ("monitor", "glitch_price_max", float),
     "PLATFORMS": ("monitor", "platforms", lambda v: [x.strip().lower() for x in v.split(",") if x.strip()]),
 }

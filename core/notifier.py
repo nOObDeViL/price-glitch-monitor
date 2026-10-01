@@ -29,7 +29,7 @@ def format_alert_html(p: Product, platform_name: str, kind: str, threshold: floa
     def e(text: str) -> str:
         return html.escape(text, quote=False)
 
-    header = f"🚨 <b>{threshold:g}%+ PRICE DROP / GLITCH DETECTED!</b>" if threshold else "🚨 <b>PRICE GLITCH DETECTED!</b>"
+    header = f"🚨 <b>{threshold:g}%+ PRICE DROP / GLITCH DETECTED!</b>" if threshold else "🚨 <b>PRICE ERROR / GLITCH DETECTED!</b>"
     label = "Glitch Price"
     lines = [
         header,
@@ -51,7 +51,7 @@ def format_alert_html(p: Product, platform_name: str, kind: str, threshold: floa
 def format_alert_plain(p: Product, platform_name: str, kind: str, threshold: float = 80) -> str:
     label = "Glitch Price"
     return "\n".join([
-        f"🚨 *{threshold:g}%+ PRICE DROP / GLITCH DETECTED!*" if threshold else "🚨 *PRICE GLITCH DETECTED!*",
+        f"🚨 *{threshold:g}%+ PRICE DROP / GLITCH DETECTED!*" if threshold else "🚨 *PRICE ERROR / GLITCH DETECTED!*",
         "",
         f"📦 Product: {p.title[:300]}",
         f"🏢 Platform: {platform_name}",
@@ -128,8 +128,8 @@ class Notifier:
     def __init__(self, cfg: Dict[str, Any]):
         self.n = cfg["notifier"]
         self.threshold = float(cfg["monitor"]["min_discount_pct"])
-        if cfg["monitor"].get("alert_mode", "glitch") == "glitch":
-            self.threshold = 0  # header becomes "PRICE GLITCH DETECTED!"
+        if cfg["monitor"].get("alert_mode", "errors") in ("glitch", "errors"):
+            self.threshold = 0  # header becomes "PRICE ERROR / GLITCH DETECTED!"
         self._client = None  # Telethon client
         self._send_lock: Optional[asyncio.Lock] = None  # created inside the running loop (py3.9)
 

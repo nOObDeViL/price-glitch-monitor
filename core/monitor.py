@@ -48,6 +48,11 @@ async def run_cycle(
                     except asyncio.TimeoutError:
                         res = ScrapeResult(name, error=f"timed out after {budget:.0f}s on {scraper._current_url or '?'}",
                                            pages_visited=len(scraper.visited_pages), seconds=budget)
+                        try:  # keep what was collected before the stall
+                            res.products = scraper._merge()
+                            res.pages = list(scraper.visited_pages[:-1])
+                        except Exception:  # noqa: BLE001
+                            pass
                 sent = await _process(res, scraper.display, cfg, db, notifier, dry_run, show_top, scraper, bm)
                 summary["platforms"][name] = {
                     "products": len(res.products),
@@ -161,6 +166,10 @@ async def _notify_block(name: str, display: str, reason: str, db: Database, noti
 
 
 def _reason_group(reason: str) -> str:
+    for key, label in (("learning normal price", "learning-normal-price"), ("not an error", "not-an-error"),
+                       ("usual price", "standing-price")):
+        if key in reason:
+            return label
     for key in ("baseline", "unchanged since baseline", "seller-set MRP", "permanent discount", "MRP jumped",
                 "out of stock", "blocklisted", "min_mrp", "missing MRP"):
         if key in reason:

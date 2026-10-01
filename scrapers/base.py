@@ -393,15 +393,17 @@ class BaseScraper:
                      if q.product_id == p.product_id or self._norm(q.title) == self._norm(p.title)]
             if not again:
                 return "gone from the listing on re-check"
-            if min(q.price for q in again) > float(self.cfg["monitor"]["glitch_price_max"]):
-                return f"re-check shows ₹{min(q.price for q in again):g}"
+            now_price = min(q.price for q in again)
+            if now_price > p.price * 1.05 + 0.5:
+                return f"re-check shows ₹{now_price:g}, not ₹{p.price:g}"
             p.extra["verified_by"] = "listing re-check"
             return None
         except Exception as exc:  # noqa: BLE001
             return f"re-check failed ({str(exc).splitlines()[0][:80]})"
         finally:
             try:
-                await ctx.close()
+                # Closing a persistent Chrome profile occasionally hangs (Playwright quirk).
+                await asyncio.wait_for(ctx.close(), timeout=15)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -526,14 +528,18 @@ class BaseScraper:
                 self._clear_cooldown()
             # Parsing MBs of JSON is CPU-bound: keep it off the event loop so the
             # other platforms' browsers keep running meanwhile.
+            t_merge = time.time()
             res.products = await asyncio.to_thread(self._merge)
+            self.log.debug("merged %d payloads -> %d products in %.1fs", len(self._json_payloads),
+                           len(res.products), time.time() - t_merge)
             res.pages = list(self.visited_pages)
         except Exception as exc:  # noqa: BLE001
             self.log.exception("scrape failed")
             res.error = str(exc)
         finally:
             try:
-                await ctx.close()
+                # Closing a persistent Chrome profile occasionally hangs (Playwright quirk).
+                await asyncio.wait_for(ctx.close(), timeout=15)
             except Exception:  # noqa: BLE001
                 pass
             res.seconds = time.time() - t0

@@ -1,6 +1,17 @@
 """Glitch / deep-discount rules plus false-positive filtering.
 
-Default ``alert_mode = "glitch"``: alert ONLY when the price is <= ₹10
+Default ``alert_mode = "errors"`` - genuine pricing errors at ANY price, judged
+against the product's OWN price history instead of the (fakeable) MRP:
+
+* price <= ₹10 (``glitch_price_max``) with MRP >= ₹99 -> glitch, always.
+* price >= 60% (``error_drop_pct``) below the LOWEST price we've ever seen for
+  this product, with >= 3 sightings over >= 24 h of history. Comparing to the
+  lowest price (not the highest) is what defeats "bump the price, then cut it":
+  ₹500 -> ₹2,000 -> ₹500 never goes below its own ₹500 floor.
+* first sighting (no history yet): only >= 95% off a printed MRP on the
+  quick-commerce/grocery platforms.
+
+``alert_mode = "glitch"``: alert ONLY when the price is <= ₹10
 (``glitch_price_max``) on a product with a real MRP >= ₹99 (``min_mrp``). An
 inflated-then-discounted price can't reach ₹10, so the "bump the price, then
 cut it" trick never triggers. The candidate is then re-checked on its product
@@ -66,7 +77,9 @@ def evaluate(p: Product, cfg: Dict[str, Any], db: Optional[Database] = None, bas
     discount = (p.mrp - p.price) / p.mrp * 100
     is_glitch = p.price <= float(m["glitch_price_max"])
     is_drop = discount >= float(m["min_discount_pct"])
-    if m.get("alert_mode", "glitch") == "glitch":
+    if m.get("alert_mode", "errors") == "errors":
+        return _evaluate_errors(p, m, db, discount, is_glitch)
+    if m.get("alert_mode", "errors") == "glitch":
         if not is_glitch:
             return Decision(False, f"only {discount:.0f}% off - ₹{p.price:g} is above glitch_price_max")
         is_drop = False
@@ -98,3 +111,36 @@ def evaluate(p: Product, cfg: Dict[str, Any], db: Optional[Database] = None, bas
         return Decision(False, f"{discount:.0f}% off a seller-set MRP (strict marketplace mode)")
 
     return Decision(True, f"{discount:.0f}% off", "glitch" if is_glitch else "drop", note)
+
+
+def _evaluate_errors(p: Product, m: Dict[str, Any], db: Optional[Database], discount: float, is_glitch: bool) -> Decision:
+    stats = db.history_stats(p.platform, p.product_id) if db is not None else None
+    established = bool(
+        stats
+        and stats["count"] >= int(m.get("history_min_points", 3))
+        and stats["span_h"] >= float(m.get("history_min_hours", 24))
+    )
+    if established and p.price >= stats["median"] * 0.9:
+        # It has always cost about this much: a standing price, not an error.
+        return Decision(False, f"usual price (₹{stats['median']:g}) - not an error")
+
+    if is_glitch:
+        return Decision(True, f"₹{p.price:g} glitch price", "glitch")
+
+    drop_pct = float(m.get("error_drop_pct", 60))
+    if established:
+        floor = stats["min_price"]
+        below_floor = (1 - p.price / floor) * 100 if floor > 0 else 0
+        if floor >= float(m.get("error_min_reference", 50)) and below_floor >= drop_pct and discount >= drop_pct:
+            days = max(1, round(stats["span_h"] / 24))
+            note = (f"📉 Never seen below ₹{floor:,.0f} before ({stats['count']} checks over {days} day(s)) "
+                    f"- now {below_floor:.0f}% under that")
+            return Decision(True, f"{below_floor:.0f}% below lowest-ever ₹{floor:g}", "error", note)
+        return Decision(False, f"not an error: lowest seen ₹{floor:g}, now ₹{p.price:g}")
+
+    trusted = p.platform in m.get("trusted_mrp_platforms", [])
+    if trusted and discount >= float(m.get("extreme_discount_pct", 95)):
+        return Decision(True, f"{discount:.0f}% off printed MRP", "error",
+                        "🆕 First sighting: 95%+ below the printed MRP")
+    have = stats["count"] if stats else 0
+    return Decision(False, f"learning normal price ({have} check(s) so far)")
