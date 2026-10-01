@@ -1,5 +1,13 @@
 """Glitch / deep-discount rules plus false-positive filtering.
 
+Default ``alert_mode = "glitch"``: alert ONLY when the price is <= ₹10
+(``glitch_price_max``) on a product with a real MRP >= ₹99 (``min_mrp``). An
+inflated-then-discounted price can't reach ₹10, so the "bump the price, then
+cut it" trick never triggers. The candidate is then re-checked on its product
+page (see monitor.py) before you're alerted.
+
+``alert_mode = "deals"`` restores the broader rule below.
+
 Alert rule (from the spec):   discount >= 80%   OR   price <= ₹1
 ...then a product must survive these sanity checks:
 
@@ -58,6 +66,10 @@ def evaluate(p: Product, cfg: Dict[str, Any], db: Optional[Database] = None, bas
     discount = (p.mrp - p.price) / p.mrp * 100
     is_glitch = p.price <= float(m["glitch_price_max"])
     is_drop = discount >= float(m["min_discount_pct"])
+    if m.get("alert_mode", "glitch") == "glitch":
+        if not is_glitch:
+            return Decision(False, f"only {discount:.0f}% off - ₹{p.price:g} is above glitch_price_max")
+        is_drop = False
     if not (is_glitch or is_drop):
         return Decision(False, f"only {discount:.0f}% off")
     extreme = is_glitch or discount >= float(m.get("extreme_discount_pct", 95))

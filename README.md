@@ -152,6 +152,20 @@ When a **Cloudflare / DataDome / AWS WAF / Amazon robot check** appears, the pla
 back-off** (15 → 30 → 60 … 240 min), and you get a Telegram note telling you to run `--login <platform>` and clear it
 by hand. The tool never tries to solve CAPTCHAs.
 
+### Default: glitch-only mode
+
+Out of the box (`"alert_mode": "glitch"`) you're alerted **only** when an item costs **₹10 or less** with an MRP of
+**₹99 or more**: real pricing errors such as ₹0, ₹1 or ₹9 on a ₹500 product. Ordinary "80 % off" deals are ignored,
+so sellers who inflate the MRP and then "discount" it can't trigger an alert.
+
+Before every alert the monitor **re-checks** the item: it opens the product page and confirms the main price shown
+there. If the product page shows no readable price (Instamart, Zepto), it reloads the listing instead. Only confirmed
+glitches are sent, and the alert says `✅ Price re-checked`. If one platform suddenly shows many "₹0" items at
+once, only the top 5 are checked, since that's usually a parsing issue or a promo shelf.
+
+Settings: `glitch_price_max` (default 10), `min_mrp` (default 99). `"alert_mode": "deals"` brings back the broader
+80 %-off rules described below.
+
 ### Alert rules and false-positive filtering
 
 An item alerts when `((mrp - price) / mrp) * 100 >= 80` **or** `price <= 1`, **and** it passes these checks:

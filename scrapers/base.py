@@ -46,6 +46,32 @@ EMBEDDED_STATE_JS = r"""
 }
 """
 
+# Main selling price on a product page = biggest-font, non-strikethrough ₹ amount near the top.
+MAIN_PRICE_JS = r"""
+() => {
+  const out = [];
+  const num = /^\s*(?:₹|Rs\.?)?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*$/;
+  for (const el of document.querySelectorAll('body *')) {
+    if (el.children.length > 3) continue;
+    const t = (el.innerText || '').trim();
+    if (!t || t.length > 14) continue;
+    const m = t.match(num); if (!m) continue;
+    const gp = el.parentElement && el.parentElement.parentElement;
+    if (!/₹|Rs\.?|MRP/i.test(t + ((gp && gp.innerText) || '').slice(0, 200))) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.top > 1400 || r.top < 0) continue;
+    let struck = false;
+    for (let e = el, i = 0; e && i < 4; e = e.parentElement, i++) {
+      if ((getComputedStyle(e).textDecorationLine || '').includes('line-through') || ['DEL', 'S'].includes(e.tagName)) struck = true;
+    }
+    if (struck) continue;
+    out.push([parseFloat(m[1].replace(/,/g, '')), parseFloat(getComputedStyle(el).fontSize), Math.round(r.top)]);
+  }
+  out.sort((a, b) => b[1] - a[1] || a[2] - b[2]);
+  return out.slice(0, 5);
+}
+"""
+
 DETECT_LOCATION_RX = re.compile(
     r"detect my location|use (?:my )?current location|use my location|locate me|detect location|enable location",
     re.I,
@@ -271,7 +297,20 @@ class BaseScraper:
 
     # ----------------------------------------------------- page visit
     async def visit(self, page: Page, url: str) -> Optional[str]:
-        """Navigate, scroll, collect. Returns a block reason if challenged."""
+        """Navigate, scroll, collect. Returns a block reason if challenged.
+
+        Hard 75 s cap per page: a page that hangs is skipped, not the whole platform."""
+        try:
+            return await asyncio.wait_for(self._visit(page, url), timeout=75)
+        except asyncio.TimeoutError:
+            self.log.warning("page took too long, skipped: %s", url)
+            try:
+                await page.evaluate("() => window.stop()")
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+
+    async def _visit(self, page: Page, url: str) -> Optional[str]:
         t0 = time.time()
         self.log.debug("visit %s", url)
         self._current_url = url
@@ -323,6 +362,101 @@ class BaseScraper:
             (d / f"{stamp}-{tag}.html").write_text(await page.content(), encoding="utf-8")
         except Exception:  # noqa: BLE001
             pass
+
+    # --------------------------------------------------------- verify
+    async def verify(self, bm: BrowserManager, p: Product) -> Optional[str]:
+        """Independently re-check a glitch before alerting. Returns None if confirmed, else why not.
+
+        1. Product page: the *main* price (largest-font, non-strikethrough ₹ amount near the
+           top) or the page's own API data for this product must match.
+        2. If the product page shows no readable price (Instamart, Zepto), reload the listing
+           it was found on in a fresh visit and require it to still be <= the glitch price.
+        """
+        ctx = await bm.open_context(self.name)
+        try:
+            page = await bm.get_page(ctx)
+            if p.url.startswith("http") and "/search" not in p.url:
+                verdict = await self._verify_product_page(page, p)
+                if verdict is not None:
+                    return None if verdict == "ok" else verdict
+            listing = p.extra.get("page")
+            if not listing:
+                return "couldn't re-check (no product page price, no listing)"
+            fresh = type(self)(self.cfg, self.db)
+            fresh._json_payloads, fresh._payload_pages, fresh._dom_products = [], [], []
+            page.on("response", fresh._on_response)
+            blocked = await fresh.visit(page, listing)
+            await fresh._drain()
+            if blocked:
+                return f"re-check blocked ({blocked})"
+            again = [q for q in await asyncio.to_thread(fresh._merge)
+                     if q.product_id == p.product_id or self._norm(q.title) == self._norm(p.title)]
+            if not again:
+                return "gone from the listing on re-check"
+            if min(q.price for q in again) > float(self.cfg["monitor"]["glitch_price_max"]):
+                return f"re-check shows ₹{min(q.price for q in again):g}"
+            p.extra["verified_by"] = "listing re-check"
+            return None
+        except Exception as exc:  # noqa: BLE001
+            return f"re-check failed ({str(exc).splitlines()[0][:80]})"
+        finally:
+            try:
+                await ctx.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    async def _verify_product_page(self, page: Page, p: Product) -> Optional[str]:
+        """'ok', a rejection reason, or None when the page has no readable price."""
+        payloads: List[Any] = []
+
+        async def grab(r: Response) -> None:
+            try:
+                if "json" in r.headers.get("content-type", ""):
+                    payloads.append(await asyncio.wait_for(r.json(), 10))
+            except Exception:  # noqa: BLE001
+                pass
+
+        tasks: List[asyncio.Task] = []
+        page.on("response", lambda r: tasks.append(asyncio.ensure_future(grab(r))))
+        try:
+            await page.goto(p.url, wait_until="domcontentloaded")
+            try:
+                await page.wait_for_load_state("networkidle", timeout=6000)
+            except Exception:  # noqa: BLE001
+                pass
+            await page.wait_for_timeout(2500)
+        except Exception:  # noqa: BLE001
+            return None
+        blocked = await detect_block(page)
+        if blocked:
+            return f"product page blocked ({blocked})"
+        text = await page.evaluate("() => document.body ? document.body.innerText.slice(0, 5000) : ''")
+        if re.search(r"out of stock|sold out|currently unavailable|notify me", text, re.I):
+            return "product page says out of stock"
+
+        close = lambda v: abs(v - p.price) <= 0.5  # noqa: E731
+        main = await page.evaluate(MAIN_PRICE_JS)
+        if main:
+            top = main[0][0]
+            if close(top):
+                p.extra["verified_by"] = "product page"
+                return "ok"
+            return f"product page shows ₹{top:g}, not ₹{p.price:g}"
+
+        if tasks:
+            await asyncio.wait(tasks, timeout=10)
+        try:
+            payloads += await page.evaluate(EMBEDDED_STATE_JS)
+        except Exception:  # noqa: BLE001
+            pass
+        for blob in payloads:
+            for q in extract_from_json(blob, self.name, lambda c: "", self.price_divisor):
+                if q.product_id == p.product_id or self._norm(q.title) == self._norm(p.title):
+                    if close(q.price):
+                        p.extra["verified_by"] = "product page data"
+                        return "ok"
+                    return f"product page data says ₹{q.price:g}, not ₹{p.price:g}"
+        return None
 
     # ------------------------------------------------------------ run
     async def scrape(self, bm: BrowserManager) -> ScrapeResult:

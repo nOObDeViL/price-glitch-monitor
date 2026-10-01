@@ -57,8 +57,16 @@ DEFAULTS: Dict[str, Any] = {
     },
     "monitor": {
         "interval_minutes": 5,
+        # "glitch": alert ONLY when price <= glitch_price_max (₹0-10 pricing errors).
+        # "deals":  also alert on >= min_discount_pct drops (noisy: inflated MRPs).
+        "alert_mode": "glitch",
         "min_discount_pct": 80.0,
-        "glitch_price_max": 1.0,
+        "glitch_price_max": 10.0,
+        # Re-open each glitch's product page and confirm the price + stock before alerting.
+        "verify_glitches": True,
+        # More glitch candidates than this from one platform in one scan = parsing
+        # problem or a promo shelf, not real errors: only the top few get verified.
+        "max_verifications": 5,
         "dedupe_hours": 12,
         # Ignore cheap items: ₹12 -> ₹2 is technically 83% off but not interesting.
         "min_mrp": 99.0,
@@ -120,6 +128,8 @@ ENV_MAP = {
     "INTERVAL_MINUTES": ("monitor", "interval_minutes", int),
     "MIN_DISCOUNT_PCT": ("monitor", "min_discount_pct", float),
     "MIN_MRP": ("monitor", "min_mrp", float),
+    "ALERT_MODE": ("monitor", "alert_mode", str),
+    "GLITCH_PRICE_MAX": ("monitor", "glitch_price_max", float),
     "PLATFORMS": ("monitor", "platforms", lambda v: [x.strip().lower() for x in v.split(",") if x.strip()]),
 }
 

@@ -48,7 +48,7 @@ async def run_cycle(
                     except asyncio.TimeoutError:
                         res = ScrapeResult(name, error=f"timed out after {budget:.0f}s on {scraper._current_url or '?'}",
                                            pages_visited=len(scraper.visited_pages), seconds=budget)
-                sent = await _process(res, scraper.display, cfg, db, notifier, dry_run, show_top)
+                sent = await _process(res, scraper.display, cfg, db, notifier, dry_run, show_top, scraper, bm)
                 summary["platforms"][name] = {
                     "products": len(res.products),
                     "pages": res.pages_visited,
@@ -81,6 +81,8 @@ async def _process(
     notifier: Notifier,
     dry_run: bool,
     show_top: int,
+    scraper: Any = None,
+    bm: Any = None,
 ) -> int:
     hours = float(cfg["monitor"]["dedupe_hours"])
     known_pages = db.known_pages(res.platform)
@@ -115,8 +117,26 @@ async def _process(
     if show_top:
         _print_top(res.products, display, show_top)
 
+    to_send.sort(key=lambda x: -(x[0].mrp or 0))
+    m = cfg["monitor"]
+    if m.get("verify_glitches", True) and scraper is not None and bm is not None:
+        limit = int(m.get("max_verifications", 5))
+        if len(to_send) > limit:
+            log.warning("[%s] %d glitch candidates in one scan - looks like a parsing problem or promo shelf; "
+                        "verifying only the top %d", res.platform, len(to_send), limit)
+        confirmed = []
+        for p, kind in to_send[:limit]:
+            problem = await scraper.verify(bm, p)
+            if problem:
+                log.info("[%s] not alerting %s ₹%g: %s", res.platform, p.title[:60], p.price, problem)
+            else:
+                how = p.extra.get("verified_by", "product page")
+                p.extra["note"] = (p.extra.get("note", "") + f"\n✅ Price re-checked ({how})").strip()
+                confirmed.append((p, kind))
+        to_send = confirmed
+
     sent = 0
-    for p, kind in sorted(to_send, key=lambda x: -x[0].discount_pct):
+    for p, kind in to_send:
         if dry_run:
             log.info("[DRY-RUN] %s | %s | ₹%s (MRP ₹%s) %s%% | %s", display, p.title[:80], p.price, p.mrp, p.discount_pct, p.url)
             sent += 1

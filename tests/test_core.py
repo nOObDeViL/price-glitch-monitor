@@ -19,6 +19,7 @@ from core.notifier import format_alert_html, format_alert_plain  # noqa: E402
 
 def cfg(**monitor):
     c = _deep_merge(DEFAULTS, {})
+    c["monitor"].update(alert_mode="deals", glitch_price_max=1.0)  # legacy rules for the older tests
     c["monitor"].update(monitor)
     return c
 
@@ -180,6 +181,21 @@ class TestBaseline(unittest.TestCase):
 
     def test_baseline_can_be_disabled(self):
         self.assertTrue(evaluate(prod(price=60, mrp=400), cfg(baseline_first_scan=False), self.db, baseline=True).alert)
+
+
+class TestGlitchMode(unittest.TestCase):
+    def test_only_tiny_prices_alert(self):
+        c = cfg(alert_mode="glitch", glitch_price_max=10)
+        self.assertFalse(evaluate(prod(price=45, mrp=999), c).alert)    # 95% off but ₹45: not a glitch
+        self.assertFalse(evaluate(prod(price=229, mrp=2999), c).alert)  # bumped-MRP style deal
+        self.assertTrue(evaluate(prod(price=10, mrp=499), c).alert)
+        self.assertTrue(evaluate(prod(price=0, mrp=150), c).alert)
+        self.assertFalse(evaluate(prod(price=5, mrp=20), c).alert)      # cheap item, MRP < ₹99
+        self.assertFalse(evaluate(prod(price=1, mrp=500, in_stock=False), c).alert)
+
+    def test_defaults_are_glitch_mode(self):
+        self.assertEqual(DEFAULTS["monitor"]["alert_mode"], "glitch")
+        self.assertEqual(DEFAULTS["monitor"]["glitch_price_max"], 10.0)
 
 
 class TestDedupe(unittest.TestCase):
