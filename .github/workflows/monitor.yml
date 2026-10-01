@@ -32,6 +32,7 @@ jobs:
       # Override without editing this file: Settings -> Secrets and variables -> Actions -> Variables -> PLATFORMS
       PLATFORMS: ${{ vars.PLATFORMS || 'amazon,flipkart,flipkart_minutes,instamart,jiomart' }}
       HEADLESS: "true"
+      BLOCK_NOTICES: "false"     # bot checks are handled by automatic back-off; --login can't help in the cloud
       PYTHONWARNINGS: ignore
     steps:
       - uses: actions/checkout@v4

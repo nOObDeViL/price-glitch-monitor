@@ -98,6 +98,10 @@ DEFAULTS: Dict[str, Any] = {
         "concurrency": 4,
         # Hard cap per platform per cycle so one hung page can't stall the monitor.
         "platform_timeout_s": 240,
+        # Scan some platforms less often than every cycle (fewer bot checks).
+        "platform_min_interval_minutes": {"amazon": 30},
+        # Telegram warning when a platform shows a bot check (off in the cloud: --login can't help there).
+        "block_notices": True,
         "max_category_pages": 3,
     },
     "browser": {
@@ -135,6 +139,7 @@ ENV_MAP = {
     "MIN_DISCOUNT_PCT": ("monitor", "min_discount_pct", float),
     "MIN_MRP": ("monitor", "min_mrp", float),
     "ALERT_MODE": ("monitor", "alert_mode", str),
+    "BLOCK_NOTICES": ("monitor", "block_notices", lambda v: v.strip().lower() in ("1", "true", "yes")),
     "ERROR_DROP_PCT": ("monitor", "error_drop_pct", float),
     "GLITCH_PRICE_MAX": ("monitor", "glitch_price_max", float),
     "PLATFORMS": ("monitor", "platforms", lambda v: [x.strip().lower() for x in v.split(",") if x.strip()]),

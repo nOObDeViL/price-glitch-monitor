@@ -468,6 +468,12 @@ class BaseScraper:
         if remaining:
             res.blocked = f"cooling down ({remaining / 60:.0f} min left)"
             return res
+        every = float((self.cfg["monitor"].get("platform_min_interval_minutes") or {}).get(self.name, 0))
+        last = float(self.db.kv_get(f"lastscan:{self.name}") or 0)
+        if every and time.time() - last < every * 60:
+            res.note = f"skipped - scanned {(time.time() - last) / 60:.0f} min ago (runs every {every:g} min)"
+            return res
+        self.db.kv_set(f"lastscan:{self.name}", time.time())
 
         self._json_payloads, self._payload_pages, self._dom_products = [], [], []
         ctx = await bm.open_context(self.name)

@@ -64,7 +64,8 @@ async def run_cycle(
                     "seconds": round(res.seconds, 1),
                 }
                 summary["alerts"] += sent
-                if res.blocked and not res.blocked.startswith("cooling") and not dry_run:
+                if (res.blocked and not res.blocked.startswith("cooling") and not dry_run
+                        and cfg["monitor"].get("block_notices", True)):
                     await _notify_block(name, scraper.display, res.blocked, db, notifier)
 
             await asyncio.gather(*(one(p) for p in platforms))
