@@ -176,6 +176,18 @@ listing for Instamart and Zepto. Only confirmed errors are sent (`✅ Price re-c
 Settings: `error_drop_pct` (60), `history_min_hours` (24), `glitch_price_max` (10), `min_mrp` (99).
 Other modes: `"glitch"` (only ≤ ₹10) and `"deals"` (any 80 %+ off MRP, which is noisy).
 
+### Daily deal digest
+
+Every evening after 21:00 IST you get one Telegram message with:
+* the **10 biggest real price drops of the day**: products whose price is at least 30 % below their own lowest
+  price before today, so an inflated MRP can't get them in. These are good deals that aren't errors and don't
+  trigger an instant alert;
+* **platform health**: scans, products per scan, products tracked, alerts, bot-check blocks and items that failed
+  the re-check, per platform. If a platform shows 🔴 or "not scanned today", that's where the gaps are.
+
+Settings: `digest_hour_ist` (21), `digest_min_drop_pct` (30), `digest_size` (10), `digest_enabled`.
+Run `python run.py --digest` to send one now from your local database.
+
 ### Alert rules and false-positive filtering
 
 An item alerts when `((mrp - price) / mrp) * 100 >= 80` **or** `price <= 1`, **and** it passes these checks:

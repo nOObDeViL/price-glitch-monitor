@@ -158,6 +158,22 @@ def cmd_export_cloud() -> None:
         print(f"  {k}\n    {v}\n")
 
 
+async def cmd_digest() -> None:
+    from core.database import Database
+    from core.monitor import build_digest
+    from core.notifier import Notifier
+
+    cfg = load_config()
+    db = Database(DB_PATH)
+    text = build_digest(cfg, db)
+    db.close()
+    n = Notifier(cfg)
+    await n.start()
+    ok = await n.send_text(text)
+    await n.stop()
+    print("✅ Digest sent." if ok else "❌ Sending failed.")
+
+
 def cmd_status() -> None:
     from core.browser import BrowserManager
     from core.database import Database
@@ -225,6 +241,7 @@ def main() -> None:
     ap.add_argument("--show-top", type=int, default=0, metavar="N", help="print the N biggest discounts per platform")
     ap.add_argument("--test-alert", action="store_true", help="send a sample alert")
     ap.add_argument("--status", action="store_true", help="show sessions, cooldowns and recent alerts")
+    ap.add_argument("--digest", action="store_true", help="send the daily deal digest now")
     ap.add_argument("--export-cloud-secrets", action="store_true", help="print the values for GitHub Actions secrets")
     ap.add_argument("--headful", action="store_true", help="show the browser while scanning")
     ap.add_argument("--debug", action="store_true", help="verbose logs + save screenshots/JSON to ./debug")
@@ -253,6 +270,9 @@ def main() -> None:
         return
     if args.status:
         cmd_status()
+        return
+    if args.digest:
+        asyncio.run(cmd_digest())
         return
     if args.export_cloud_secrets:
         cmd_export_cloud()

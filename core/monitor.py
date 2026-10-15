@@ -64,11 +64,16 @@ async def run_cycle(
                     "seconds": round(res.seconds, 1),
                 }
                 summary["alerts"] += sent
+                if not dry_run and not (res.note or "").startswith("skipped"):
+                    db.bump_stats(name, scans=1, products=len(res.products),
+                                  blocked=1 if res.blocked else 0, failed=1 if res.error and not res.products else 0)
                 if (res.blocked and not res.blocked.startswith("cooling") and not dry_run
                         and cfg["monitor"].get("block_notices", True)):
                     await _notify_block(name, scraper.display, res.blocked, db, notifier)
 
             await asyncio.gather(*(one(p) for p in platforms))
+        if not dry_run:
+            await _maybe_send_digest(cfg, db, notifier)
         db.prune()
     finally:
         await notifier.stop()
@@ -131,9 +136,13 @@ async def _process(
             log.warning("[%s] %d glitch candidates in one scan - looks like a parsing problem or promo shelf; "
                         "verifying only the top %d", res.platform, len(to_send), limit)
         confirmed = []
+        if not dry_run and to_send:
+            db.bump_stats(res.platform, candidates=len(to_send))
         for p, kind in to_send[:limit]:
             problem = await scraper.verify(bm, p)
             if problem:
+                if not dry_run:
+                    db.bump_stats(res.platform, rejected=1)
                 log.info("[%s] not alerting %s ₹%g: %s", res.platform, p.title[:60], p.price, problem)
             else:
                 how = p.extra.get("verified_by", "product page")
@@ -149,9 +158,70 @@ async def _process(
             continue
         if await notifier.send_alert(p, display, kind):
             db.record_alert(p)
+            db.bump_stats(res.platform, alerts=1)
             sent += 1
             log.info("ALERT %s | %s | ₹%s (MRP ₹%s) %s%%", display, p.title[:80], p.price, p.mrp, p.discount_pct)
     return sent
+
+
+async def _maybe_send_digest(cfg: Dict[str, Any], db: Database, notifier: Notifier) -> None:
+    """Once a day after `digest_hour_ist`: biggest genuine drops + how each platform did."""
+    m = cfg["monitor"]
+    if not m.get("digest_enabled", True):
+        return
+    import datetime as _dt
+    ist_now = _dt.datetime.utcnow() + _dt.timedelta(hours=5, minutes=30)
+    today = db.ist_date()
+    if ist_now.hour < int(m.get("digest_hour_ist", 21)) or db.kv_get("digest:last") == today:
+        return
+    if await notifier.send_text(build_digest(cfg, db)):
+        db.kv_set("digest:last", today)
+
+
+def build_digest(cfg: Dict[str, Any], db: Database) -> str:
+    import html as _html
+
+    from scrapers import SCRAPERS as _S
+
+    m = cfg["monitor"]
+    e = lambda t: _html.escape(str(t), quote=False)  # noqa: E731
+    names = {k: v.display for k, v in _S.items()}
+    min_drop = float(m.get("digest_min_drop_pct", 30))
+    drops = db.biggest_real_drops(min_drop, float(m.get("error_min_reference", 50)), int(m.get("digest_size", 10)))
+
+    lines = ["📊 <b>Daily deal digest</b>",
+             f"<i>Biggest real price drops today: each compared to that product's own lowest-ever price "
+             f"(min {min_drop:g}% lower), so inflated MRPs can't sneak in.</i>", ""]
+    if drops:
+        for i, (plat, _pid, price, mrp, floor, _n, title, url) in enumerate(drops, 1):
+            pct = (1 - price / floor) * 100
+            name = e((title or "product")[:70])
+            link = f'<a href="{_html.escape(url or "", quote=True)}">{name}</a>' if url else name
+            lines.append(f"{i}. {link}\n    ₹{price:,.0f} <s>lowest before ₹{floor:,.0f}</s> (-{pct:.0f}%) · "
+                         f"{e(names.get(plat, plat))}")
+    else:
+        lines.append("No product dropped that much below its usual lowest price today.")
+
+    stats = db.kv_get(f"stats:{db.ist_date()}") or {}
+    tracked = db.products_tracked()
+    lines += ["", "🩺 <b>Platform health (today)</b>"]
+    for plat in m.get("platforms", []):
+        st = stats.get(plat, {})
+        scans = st.get("scans", 0)
+        if not scans:
+            lines.append(f"⚪ {e(names.get(plat, plat))}: not scanned today")
+            continue
+        bad = st.get("blocked", 0) + st.get("failed", 0)
+        icon = "🟢" if bad < scans / 2 else "🟠" if bad < scans else "🔴"
+        extra = []
+        if st.get("blocked"):
+            extra.append(f"{st['blocked']} blocked")
+        if st.get("candidates"):
+            extra.append(f"{st['candidates']} candidate(s), {st.get('rejected', 0)} failed re-check")
+        lines.append(f"{icon} {e(names.get(plat, plat))}: {scans} scans · {st.get('products', 0) // max(1, scans):,} "
+                     f"products/scan · {tracked.get(plat, 0):,} tracked · {st.get('alerts', 0)} alert(s)"
+                     + (f" · {', '.join(extra)}" if extra else ""))
+    return "\n".join(lines)[:4000]
 
 
 async def _notify_block(name: str, display: str, reason: str, db: Database, notifier: Notifier) -> None:

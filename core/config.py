@@ -102,7 +102,13 @@ DEFAULTS: Dict[str, Any] = {
         "platform_min_interval_minutes": {"amazon": 30},
         # Telegram warning when a platform shows a bot check (off in the cloud: --login can't help there).
         "block_notices": True,
-        "max_category_pages": 3,
+        "max_category_pages": 5,
+        # One Telegram message a day: biggest genuine price drops (vs each product's
+        # lowest-ever price) + per-platform health. Hour is IST.
+        "digest_enabled": True,
+        "digest_hour_ist": 21,
+        "digest_min_drop_pct": 30.0,
+        "digest_size": 10,
     },
     "browser": {
         "headless": True,
@@ -139,6 +145,7 @@ ENV_MAP = {
     "MIN_DISCOUNT_PCT": ("monitor", "min_discount_pct", float),
     "MIN_MRP": ("monitor", "min_mrp", float),
     "ALERT_MODE": ("monitor", "alert_mode", str),
+    "DIGEST_HOUR_IST": ("monitor", "digest_hour_ist", int),
     "BLOCK_NOTICES": ("monitor", "block_notices", lambda v: v.strip().lower() in ("1", "true", "yes")),
     "ERROR_DROP_PCT": ("monitor", "error_drop_pct", float),
     "GLITCH_PRICE_MAX": ("monitor", "glitch_price_max", float),
